@@ -2,9 +2,9 @@
 
 Python package for C-Mod XTOMO soft-x-ray tomographic analysis.
 
-Rewrite of the original IDL codebase (`core_xray_emissivity.pro` et al.)
+Rewrite of the original IDL codebase (`/mnt/home/granetz/xtomo/core_xray_emissivity.pro`)
 by R. Granetz (MIT PSFC).  MDSplus access uses the `mdsthin` thin-client
-library, matching the pattern established in `get_Te_ne.py`.
+library in place of TDI expressions.
 
 > **Note:** All write-to-tree (`MDSput`) calls present in the original IDL
 > code are retained as comments in `core_xray_emissivity.py` and are
@@ -19,7 +19,7 @@ library, matching the pattern established in `get_Te_ne.py`.
 git clone <repo-url>
 cd xTomo
 
-# Create and activate a virtual environment
+# Create and activate a virtual environment [if desired]
 python -m venv .venv
 source .venv/bin/activate
 
@@ -39,7 +39,7 @@ from xtomo import core_xray_emissivity, plot_core_emissivity
 
 # Run the tomographic inversion
 emissivity, r, z, t, ok = core_xray_emissivity(
-    1140221013,
+    1120927023,
     tstart=0.8, tstop=1.4, dt=0.05,
     use_efit_center=True,
     auto_calc_rnorm=True,
@@ -47,7 +47,7 @@ emissivity, r, z, t, ok = core_xray_emissivity(
 
 # Plot a single time slice
 import matplotlib.pyplot as plt
-plot_core_emissivity(1140221013, emissivity, r, z, t, time=1.2)
+plot_core_emissivity(1120927023, emissivity, r, z, t, time=1.2)
 plt.show()
 ```
 
@@ -83,8 +83,8 @@ xTomo/
 
 The inversion follows the Fourier-Bessel expansion described in:
 
-- Y. Nagayama, *J. Appl. Phys.* **62** (1987) 2702
-- L. Wang & R. Granetz, *Rev. Sci. Instrum.* **62** (1991) 842
+- Y. Nagayama,``Tomography of m=1 mode structure in tokamak plasma using least‐square‐fitting method and Fourier–Bessel expansions'' *J. Appl. Phys.* **62** (1987) 2702
+- L. Wang & R. Granetz, ``A simplified expression for the Radon transform of Bessel basis functions in tomography'' *Rev. Sci. Instrum.* **62** (1991) 842
 
 The line integrals through each Fourier-Bessel harmonic are evaluated
 numerically with Simpson's rule (1001 points), and the resulting system is
