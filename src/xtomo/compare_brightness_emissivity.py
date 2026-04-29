@@ -28,6 +28,7 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 
+from .chord_masking import build_inversion_chord_mask
 from .core_xray_emissivity import core_xray_emissivity
 from .xtomo_mds import (
     bipolar_radii,
@@ -115,6 +116,7 @@ def compare_brightness_emissivity(
     save: str = "",
     remove_zero_chords: bool = True,
     zero_chord_threshold: float = 0.02,
+    mask_inversion_chords: bool = True,
     use_latex_style: bool = True,
 ):
     """
@@ -138,6 +140,7 @@ def compare_brightness_emissivity(
     save                  : if non-empty, save figure to this path (e.g. "out.pdf")
     remove_zero_chords    : mask interior chords whose peak amplitude < threshold
     zero_chord_threshold  : fraction of array maximum below which a chord is masked
+    mask_inversion_chords : apply the same chord mask to the inversion equations
     use_latex_style       : apply Computer Modern serif font style to all figures
     """
 
@@ -183,16 +186,13 @@ def compare_brightness_emissivity(
     # ---- Zero-chord masking --------------------------------------------
     # Remove interior chords whose peak amplitude is below threshold * max.
     # Edge chords (indices 0-1 and 36-37) are always retained.
-    # This is purely cosmetic — it does NOT affect the inversion.
     if remove_zero_chords:
-        amp1 = np.nanmax(np.abs(all1), axis=0)
-        amp3 = np.nanmax(np.abs(all3), axis=0)
-        max1 = max(float(np.nanmax(amp1)), 1e-30)
-        max3 = max(float(np.nanmax(amp3)), 1e-30)
-        mask1 = np.ones(38, dtype=bool)
-        mask3 = np.ones(38, dtype=bool)
-        mask1[2:36] = amp1[2:36] >= zero_chord_threshold * max1
-        mask3[2:36] = amp3[2:36] >= zero_chord_threshold * max3
+        mask1, mask3, inversion_mask_auto = build_inversion_chord_mask(
+            all1,
+            all3,
+            threshold=zero_chord_threshold,
+            edge_keep=2,
+        )
         n_drop1 = 38 - int(mask1.sum())
         n_drop3 = 38 - int(mask3.sum())
         if n_drop1:
@@ -202,6 +202,13 @@ def compare_brightness_emissivity(
     else:
         mask1 = np.ones(38, dtype=bool)
         mask3 = np.ones(38, dtype=bool)
+        inversion_mask_auto = None
+
+    if remove_zero_chords and mask_inversion_chords:
+        inversion_chord_mask = inversion_mask_auto
+        print(f"  Inversion will use {int(inversion_chord_mask.sum())}/76 chords")
+    else:
+        inversion_chord_mask = None
 
     # ------------------------------------------------------------------
     # 2. Compute tomographic emissivity around the requested time
@@ -219,6 +226,7 @@ def compare_brightness_emissivity(
         efit_tree=efit_tree,
         lmax=lmax,
         svd_tol=svd_tol,
+        chord_mask=inversion_chord_mask,
         verbose=True,
     )
 
@@ -376,7 +384,7 @@ def compare_brightness_emissivity(
         ax_cmp.grid(True, alpha=0.3)
 
         if save:
-            fig2.savefig(save.replace(".", "_normalised.", 1), dpi=150, bbox_inches="tight")
+            fig2.savefig(save[-4:] + "_normalised.pdf", transparent=True, bbox_inches="tight")
             print("Normalised comparison saved.")
     else:
         axE.text(
@@ -431,6 +439,11 @@ def main() -> None:
     parser.add_argument(
         "--no-latex", action="store_true", help="Do not apply LaTeX/CM serif font style"
     )
+    parser.add_argument(
+        "--no-inversion-mask",
+        action="store_true",
+        help="Do not apply the zero-chord filter to the inversion system",
+    )
     args = parser.parse_args()
 
     compare_brightness_emissivity(
@@ -443,6 +456,7 @@ def main() -> None:
         save=args.save,
         remove_zero_chords=not args.no_zero_filter,
         zero_chord_threshold=args.zero_chord_threshold,
+        mask_inversion_chords=not args.no_inversion_mask,
         use_latex_style=not args.no_latex,
     )
     plt.show()

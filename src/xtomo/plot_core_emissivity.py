@@ -23,6 +23,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import MultipleLocator
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from .xtomo_mds import read_efit_psi, read_vessel_tiles
 
@@ -150,9 +151,11 @@ def plot_core_emissivity(
         vmin=vmin,
         vmax=vmax,
         shading="flat",
-        zorder=1,
+        zorder=-1,
     )
-    fig.colorbar(pcm, ax=ax, label="Emissivity (MW/m³)", shrink=0.8)
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="4%", pad=0.08)
+    fig.colorbar(pcm, cax=cax, label="Emissivity (MW/m³)")
 
     # ---- EFIT flux contours ----------------------------------------------
     if not noflux:
@@ -164,8 +167,10 @@ def plot_core_emissivity(
 
         Rg, Zg = np.meshgrid(R_efit, Z_efit, indexing="ij")
 
-        levels_inner = (
-            np.arange(n_flux_contours + 1) / (n_flux_contours + 1) if n_flux_contours > 0 else []
+        levels_inner: np.ndarray = (
+            np.arange(n_flux_contours + 1) / (n_flux_contours + 1)
+            if n_flux_contours > 0
+            else np.array([], dtype=float)
         )
         levels = np.append(levels_inner, 1.0)  # always include LCFS
         # Note: under some odd conditions, if the EFIT tree fails to converge correctly,
@@ -180,8 +185,8 @@ def plot_core_emissivity(
             alpha=0.7,
             zorder=2,
         )
-        # except Exception as exc:
-        #     print(f'  Warning: could not plot EFIT contours: {exc}')
+        # except Exception as exc:s
+        #     print(f'  Warning: could not plot EFIT contours: {exc}'x)
         #     if halt_on_efit_error:
         #         raise RuntimeError(
         # 'Halting on EFIT contour error as requested; inspect this exception in debugger.'
@@ -199,6 +204,7 @@ def plot_core_emissivity(
         #     print(f'  Warning: could not plot vessel geometry: {exc}')
 
     if save:
+        ax.set_rasterization_zorder(0)  # rasterize the pcolormesh but keep contours sharp
         fig.savefig(save, dpi=150, bbox_inches="tight")
         print(f"Figure saved to {save}")
 

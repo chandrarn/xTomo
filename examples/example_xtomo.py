@@ -39,6 +39,8 @@ try:
         core_xray_emissivity,
         plot_core_emissivity,
     )
+    from xtomo.chord_masking import build_inversion_chord_mask
+    from xtomo.xtomo_mds import read_xray_brightness
 except ImportError as exc:
     sys.exit(
         f"Cannot import the 'xtomo' package: {exc}\n"
@@ -50,7 +52,7 @@ except ImportError as exc:
 # ---------------------------------------------------------------------------
 # Defaults (edit these directly or override on the command line)
 # ---------------------------------------------------------------------------
-DEFAULT_SHOT = 1140221013
+DEFAULT_SHOT = 1120927023  # 1140221013
 DEFAULT_TIME = 1.2  # s  — time slice to visualise
 DEFAULT_TSTART = 0.8  # s  — start of inversion window
 DEFAULT_TSTOP = 1.6  # s  — end   of inversion window
@@ -76,6 +78,9 @@ def run(
     save_prefix: str = "",
     noflux: bool = False,
     novessel: bool = False,
+    remove_zero_chords: bool = True,
+    zero_chord_threshold: float = 0.02,
+    mask_inversion_chords: bool = True,
 ) -> None:
     """
     Run the full example pipeline.
@@ -91,6 +96,9 @@ def run(
     save_prefix  : if non-empty, save figures to  <save_prefix>_*.pdf
     noflux       : skip EFIT flux contours on the 2-D plot
     novessel     : skip vessel geometry on the 2-D plot
+    remove_zero_chords    : mask interior near-zero chords
+    zero_chord_threshold  : chord mask threshold as fraction of array max
+    mask_inversion_chords : apply chord masking to inversion equations
     """
 
     print("=" * 60)
@@ -103,6 +111,20 @@ def run(
     # Step 1 — Tomographic inversion
     # ------------------------------------------------------------------
     print("\n[1/3]  Running tomographic inversion ...")
+
+    inversion_chord_mask = None
+    if remove_zero_chords and mask_inversion_chords:
+        print("  Building automatic interior-chord mask for inversion ...")
+        _, b1_all, _, _ = read_xray_brightness(shot, array=1, fix_bad_channels=True)
+        _, b3_all, _, _ = read_xray_brightness(shot, array=3, fix_bad_channels=True)
+        _mask1, _mask3, inversion_chord_mask = build_inversion_chord_mask(
+            b1_all,
+            b3_all,
+            threshold=zero_chord_threshold,
+            edge_keep=2,
+        )
+        print(f"  Inversion will use {int(inversion_chord_mask.sum())}/76 chords")
+
     emissivity, r, z, t, ok = core_xray_emissivity(
         shot,
         tstart=tstart,
@@ -112,6 +134,7 @@ def run(
         auto_calc_rnorm=True,
         efit_tree=efit_tree,
         lmax=lmax,
+        chord_mask=inversion_chord_mask,
     )
 
     if not ok:
@@ -128,7 +151,7 @@ def run(
     # ------------------------------------------------------------------
     print("\n[2/3]  Plotting 2-D emissivity ...")
     save_2d = f"{save_prefix}_emissivity_2d.pdf" if save_prefix else ""
-    ax_2d = plot_core_emissivity(
+    plot_core_emissivity(
         shot,
         emissivity,
         r,
@@ -138,15 +161,16 @@ def run(
         noflux=noflux,
         novessel=novessel,
         efit_tree=efit_tree,
+        halt_on_efit_error=True,
         n_flux_contours=10,
         cmap="hot",
         save=save_2d,
     )
-    ax_2d.get_figure().suptitle(
-        f"Shot {shot}  —  2-D x-ray emissivity",
-        fontsize=11,
-        y=1.01,
-    )
+    # ax_2d.get_figure().suptitle(
+    #     f"Shot {shot}  —  2-D x-ray emissivity",
+    #     fontsize=11,
+    #     y=1.01,
+    # )
 
     # ------------------------------------------------------------------
     # Step 3 — Brightness-vs-emissivity comparison
@@ -160,10 +184,14 @@ def run(
         efit_tree=efit_tree,
         logscale=logscale,
         save=save_cmp,
+        remove_zero_chords=remove_zero_chords,
+        zero_chord_threshold=zero_chord_threshold,
+        mask_inversion_chords=mask_inversion_chords,
     )
 
-    print("\nDone.  Close the figure windows to exit.")
     plt.show()
+
+    print("\nDone.  Close the figure windows to exit.")
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +236,23 @@ def main() -> None:
         metavar="PATH",
         help="Save figures to <PATH>_*.pdf  (default: do not save)",
     )
+    parser.add_argument(
+        "--no-zero-filter",
+        action="store_true",
+        help="Keep near-zero interior chords in plots and inversion",
+    )
+    parser.add_argument(
+        "--zero-threshold",
+        type=float,
+        default=0.02,
+        dest="zero_chord_threshold",
+        help="Fraction of array max below which interior chords are masked",
+    )
+    parser.add_argument(
+        "--no-inversion-mask",
+        action="store_true",
+        help="Do not apply zero-chord filtering to inversion equations",
+    )
     args = parser.parse_args()
 
     run(
@@ -222,6 +267,9 @@ def main() -> None:
         save_prefix=args.save_prefix,
         noflux=args.noflux,
         novessel=args.novessel,
+        remove_zero_chords=not args.no_zero_filter,
+        zero_chord_threshold=args.zero_chord_threshold,
+        mask_inversion_chords=not args.no_inversion_mask,
     )
 
 
