@@ -26,10 +26,11 @@ dev = [
 ]
 
 # ---------------------------------------------------------------------------
-# Package discovery  (src layout)
+# Package discovery  (src layout + examples/)
 # ---------------------------------------------------------------------------
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["xtomo*", "examples*"]
 
 # ---------------------------------------------------------------------------
 # Command-line entry points
@@ -38,6 +39,7 @@ where = ["src"]
 xtomo-emissivity = "xtomo.core_xray_emissivity:main"
 xtomo-plot       = "xtomo.plot_core_emissivity:main"
 xtomo-compare    = "xtomo.compare_brightness_emissivity:main"
+xtomo-example    = "examples.example_xtomo:main"
 
 # ---------------------------------------------------------------------------
 # Ruff linter / formatter
