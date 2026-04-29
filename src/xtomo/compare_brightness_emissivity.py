@@ -22,23 +22,23 @@ Usage
 """
 
 from __future__ import annotations
+
 import argparse
-import numpy as np
+
 import matplotlib.pyplot as plt
-import mdsthin as mds
+import numpy as np
 
-from .xtomo_mds import (
-    XTOMO_SERVER,
-    open_tree,
-    read_xray_brightness,
-    bipolar_radii,
-)
 from .core_xray_emissivity import core_xray_emissivity
-
+from .xtomo_mds import (
+    bipolar_radii,
+    open_tree,
+    read_efit_data,
+)
 
 # ---------------------------------------------------------------------------
 # Helper: read brightness directly from BRIGHTNESSES subtree (like MATLAB code)
 # ---------------------------------------------------------------------------
+
 
 def read_brightness_profiles(shot: int, array: int, time_target: float):
     """
@@ -61,24 +61,24 @@ def read_brightness_profiles(shot: int, array: int, time_target: float):
     conn = open_tree(shot, "xtomo")
 
     timebase = np.asarray(
-        conn.get(f'dim_of(\\top.brightnesses.array_{array}:chord_01)').data(),
+        conn.get(f"dim_of(\\top.brightnesses.array_{array}:chord_01)").data(),
         dtype=float,
     )
-    ntimes   = len(timebase)
-    signals  = np.full((ntimes, 38), np.nan)
+    ntimes = len(timebase)
+    signals = np.full((ntimes, 38), np.nan)
 
-    chord_radii  = np.asarray(
-        conn.get(f'\\top.brightnesses.array_{array}:chord_radii').data(),
-        dtype=float)
+    chord_radii = np.asarray(
+        conn.get(f"\\top.brightnesses.array_{array}:chord_radii").data(), dtype=float
+    ).squeeze()
     chord_angles = np.asarray(
-        conn.get(f'\\top.brightnesses.array_{array}:chord_angles').data(),
-        dtype=float)
+        conn.get(f"\\top.brightnesses.array_{array}:chord_angles").data(), dtype=float
+    ).squeeze()
 
     for ichan in range(1, 39):
-        node = f'\\top.brightnesses.array_{array}:chord_{ichan:02d}'
+        node = f"\\top.brightnesses.array_{array}:chord_{ichan:02d}"
         try:
             sig = np.asarray(conn.get(node).data(), dtype=float)
-            n   = min(len(sig), ntimes)
+            n = min(len(sig), ntimes)
             signals[:n, ichan - 1] = sig[:n]
         except Exception:
             pass
@@ -91,10 +91,10 @@ def read_brightness_profiles(shot: int, array: int, time_target: float):
         baseline = np.nanmean(signals[idx_base, :], axis=0)
         signals -= baseline[np.newaxis, :]
 
-    t_idx     = int(np.argmin(np.abs(timebase - time_target)))
+    t_idx = int(np.argmin(np.abs(timebase - time_target)))
     brightness_at_t = signals[t_idx, :]
 
-    p_bipolar = bipolar_radii(chord_radii, chord_angles, array)
+    p_bipolar = bipolar_radii(chord_radii, chord_angles, array).squeeze()  # (38,)
 
     return chord_radii, chord_angles, p_bipolar, brightness_at_t, timebase, signals
 
@@ -103,15 +103,19 @@ def read_brightness_profiles(shot: int, array: int, time_target: float):
 # Main comparison plot
 # ---------------------------------------------------------------------------
 
+
 def compare_brightness_emissivity(
-    shot:       int,
-    time:       float,
+    shot: int,
+    time: float,
     *,
-    lmax:       int   = 15,
-    svd_tol:    float = 0.1,
-    efit_tree:  str   = 'analysis',
-    logscale:   bool  = False,
-    save:       str   = '',
+    lmax: int = 15,
+    svd_tol: float = 0.1,
+    efit_tree: str = "analysis",
+    logscale: bool = False,
+    save: str = "",
+    remove_zero_chords: bool = True,
+    zero_chord_threshold: float = 0.02,
+    use_latex_style: bool = True,
 ):
     """
     Generate a three-panel comparison figure:
@@ -130,29 +134,43 @@ def compare_brightness_emissivity(
     lmax      : max Bessel harmonic (passed to core_xray_emissivity)
     svd_tol   : SVD cutoff  (passed to core_xray_emissivity)
     efit_tree : MDSplus tree for EFIT data
-    logscale  : use logarithmic y-axis on brightness panels
-    save      : if non-empty, save figure to this path (e.g. "out.pdf")
+    logscale              : use logarithmic y-axis on brightness panels
+    save                  : if non-empty, save figure to this path (e.g. "out.pdf")
+    remove_zero_chords    : mask interior chords whose peak amplitude < threshold
+    zero_chord_threshold  : fraction of array maximum below which a chord is masked
+    use_latex_style       : apply Computer Modern serif font style to all figures
     """
 
-    print(f'\n=== compare_brightness_emissivity: shot {shot},  t = {time:.3f} s ===\n')
+    print(f"\n=== compare_brightness_emissivity: shot {shot},  t = {time:.3f} s ===\n")
+
+    # ---- Optional LaTeX-like font style (Computer Modern serif) ---------
+    if use_latex_style:
+        plt.rcParams.update(
+            {
+                "font.family": "serif",
+                "mathtext.fontset": "cm",
+                "font.size": 11,
+                "axes.titlesize": 12,
+                "axes.labelsize": 11,
+                "xtick.labelsize": 10,
+                "ytick.labelsize": 10,
+                "legend.fontsize": 9,
+            }
+        )
+        # Tip: add  plt.rcParams['text.usetex'] = True  if pdflatex is available.
 
     # ------------------------------------------------------------------
     # 1. Read raw brightness for arrays 1 and 3
     # ------------------------------------------------------------------
-    print('Reading brightness array 1 ...')
-    (chord_r1, chord_a1, p_bip1, bright1,
-     time1, all1) = read_brightness_profiles(shot, 1, time)
+    print("Reading brightness array 1 ...")
+    (chord_r1, chord_a1, p_bip1, bright1, time1, all1) = read_brightness_profiles(shot, 1, time)
 
-    print('Reading brightness array 3 ...')
-    (chord_r3, chord_a3, p_bip3, bright3,
-     time3, all3) = read_brightness_profiles(shot, 3, time)
+    print("Reading brightness array 3 ...")
+    (chord_r3, chord_a3, p_bip3, bright3, time3, all3) = read_brightness_profiles(shot, 3, time)
 
     # Actual time reported in plot title (nearest brightness sample)
-    t_idx1   = int(np.argmin(np.abs(time1 - time)))
+    t_idx1 = int(np.argmin(np.abs(time1 - time)))
     t_actual = time1[t_idx1]
-
-    phi_deg1 = np.degrees(chord_a1)
-    phi_deg3 = np.degrees(chord_a3)
 
     # Upper / lower chord separation per the bipolar convention
     # Array 1: upper = p_bipolar >= 0, lower = p_bipolar < 0
@@ -162,16 +180,39 @@ def compare_brightness_emissivity(
     upper3 = p_bip3 >= 0
     lower3 = ~upper3
 
+    # ---- Zero-chord masking --------------------------------------------
+    # Remove interior chords whose peak amplitude is below threshold * max.
+    # Edge chords (indices 0-1 and 36-37) are always retained.
+    # This is purely cosmetic — it does NOT affect the inversion.
+    if remove_zero_chords:
+        amp1 = np.nanmax(np.abs(all1), axis=0)
+        amp3 = np.nanmax(np.abs(all3), axis=0)
+        max1 = max(float(np.nanmax(amp1)), 1e-30)
+        max3 = max(float(np.nanmax(amp3)), 1e-30)
+        mask1 = np.ones(38, dtype=bool)
+        mask3 = np.ones(38, dtype=bool)
+        mask1[2:36] = amp1[2:36] >= zero_chord_threshold * max1
+        mask3[2:36] = amp3[2:36] >= zero_chord_threshold * max3
+        n_drop1 = 38 - int(mask1.sum())
+        n_drop3 = 38 - int(mask3.sum())
+        if n_drop1:
+            print(f"  Masking {n_drop1} zeroed chord(s) from array 1")
+        if n_drop3:
+            print(f"  Masking {n_drop3} zeroed chord(s) from array 3")
+    else:
+        mask1 = np.ones(38, dtype=bool)
+        mask3 = np.ones(38, dtype=bool)
+
     # ------------------------------------------------------------------
     # 2. Compute tomographic emissivity around the requested time
     # ------------------------------------------------------------------
-    print('\nRunning tomographic inversion ...')
-    dt_inv = 0.005   # 5 ms window around the requested time
+    print("\nRunning tomographic inversion ...")
+    dt_inv = 0.005  # 5 ms window around the requested time
 
     emissivity, r_em, z_em, t_em, ok = core_xray_emissivity(
         shot,
         tstart=time - dt_inv,
-        tstop=time  + dt_inv,
+        tstop=time + dt_inv,
         dt=dt_inv,
         use_efit_center=True,
         auto_calc_rnorm=True,
@@ -183,122 +224,175 @@ def compare_brightness_emissivity(
 
     # Midplane (Z = 0) emissivity profile vs R
     if ok:
-        t_em_idx    = int(np.argmin(np.abs(t_em - time)))
-        z_mid_idx   = int(np.argmin(np.abs(z_em)))
-        emiss_mid   = emissivity[:, z_mid_idx, t_em_idx]   # (nr,)
+        t_em_idx = int(np.argmin(np.abs(t_em - time)))
+        z_mid_idx = int(np.argmin(np.abs(z_em)))
+        emiss_mid = emissivity[:, z_mid_idx, t_em_idx]  # (nr,)
         t_emiss_plot = t_em[t_em_idx]
-        print(f'  Emissivity time slice: {t_emiss_plot:.4f} s  (z ≈ {z_em[z_mid_idx]*100:.1f} cm)')
+        print(f"  Emissivity time slice: {t_emiss_plot:.4f} s  (z ≈ {z_em[z_mid_idx]*100:.1f} cm)")
+        # Fetch magnetic axis R for minor-radius axis conversion
+        r_magaxis: float | None = None
+        try:
+            _ef_t, _r_magx, _, _, _, _ = read_efit_data(shot, tree=efit_tree)
+            _ef_idx = int(np.argmin(np.abs(_ef_t - t_emiss_plot)))
+            r_magaxis = float(_r_magx[_ef_idx])
+            print(f"  Magnetic axis: R0 = {r_magaxis:.4f} m")
+        except Exception as _exc:
+            print(f"  Warning: could not read R0 ({_exc}); using absolute R.")
     else:
         emiss_mid = None
-        print('  WARNING: inversion failed; emissivity panel will be empty.')
+        r_magaxis = None
+        print("  WARNING: inversion failed; emissivity panel will be empty.")
 
     # ------------------------------------------------------------------
     # 3. Build figure
     # ------------------------------------------------------------------
     fig, axes = plt.subplots(
-        1, 3,
+        1,
+        3,
         figsize=(14, 4.5),
         tight_layout=True,
         sharey=False,
     )
-    fig.suptitle(
-        f'Shot {shot},  t ≈ {t_actual:.3f} s',
-        fontsize=13, fontweight='bold')
-
-    plot_fn = axes[0].semilogy if logscale else axes[0].plot
+    fig.suptitle(f"Shot {shot},  $t \\approx$ {t_actual:.3f} s", fontsize=13, fontweight="bold")
 
     # ---- Panel A: Array 1 brightness -----------------------------------
     ax1 = axes[0]
-    kw_upper = dict(marker='.', markersize=4, linewidth=1.2)
-    kw_lower = dict(marker='.', markersize=4, linewidth=1.2, linestyle='--')
+    kw_upper = {"marker": ".", "markersize": 4, "linewidth": 1.2}
+    kw_lower = {"marker": ".", "markersize": 4, "linewidth": 1.2, "linestyle": "--"}
+    u1 = upper1 & mask1
+    l1 = lower1 & mask1
 
     if logscale:
-        b1u = np.clip(bright1[upper1] / 1e3, 1e-3, None)
-        b1l = np.clip(bright1[lower1] / 1e3, 1e-3, None)
-        ax1.semilogy(p_bip1[upper1], b1u, color='red',   label='above midplane', **kw_upper)
-        ax1.semilogy(p_bip1[lower1], b1l, color='blue',  label='below midplane', **kw_lower)
+        b1u = np.clip(bright1[u1] / 1e3, 1e-3, None)
+        b1l = np.clip(bright1[l1] / 1e3, 1e-3, None)
+        ax1.semilogy(p_bip1[u1], b1u, color="red", label="above midplane", **kw_upper)
+        ax1.semilogy(p_bip1[l1], b1l, color="blue", label="below midplane", **kw_lower)
     else:
-        ax1.plot(p_bip1[upper1], bright1[upper1] / 1e3, color='red',  label='above midplane', **kw_upper)
-        ax1.plot(p_bip1[lower1], bright1[lower1] / 1e3, color='blue', label='below midplane', **kw_lower)
+        ax1.plot(p_bip1[u1], bright1[u1] / 1e3, color="red", label="above midplane", **kw_upper)
+        ax1.plot(p_bip1[l1], bright1[l1] / 1e3, color="blue", label="below midplane", **kw_lower)
 
-    ax1.axvline(0, color='grey', linewidth=0.5, linestyle=':')
-    ax1.set_xlabel('Chord radius (m)', fontsize=11)
-    ax1.set_ylabel('Brightness (kW/m²)', fontsize=11)
-    ax1.set_title('Array 1 (SXR)', fontsize=11)
-    ax1.legend(fontsize=9)
+    ax1.axvline(0, color="grey", linewidth=0.5, linestyle=":")
+    ax1.set_xlabel(r"Impact parameter  $p$  (m)")
+    ax1.set_ylabel(r"Brightness  (kW m$^{-2}$)")
+    ax1.set_title("Array 1 (SXR)")
+    ax1.legend()
     ax1.grid(True, alpha=0.3)
 
     # ---- Panel B: Array 3 brightness -----------------------------------
     ax3 = axes[1]
-    if logscale:
-        b3u = np.clip(bright3[upper3] / 1e3, 1e-3, None)
-        b3l = np.clip(bright3[lower3] / 1e3, 1e-3, None)
-        ax3.semilogy(p_bip3[upper3], b3u, color='red',  label='above midplane', **kw_upper)
-        ax3.semilogy(p_bip3[lower3], b3l, color='blue', label='below midplane', **kw_lower)
-    else:
-        ax3.plot(p_bip3[upper3], bright3[upper3] / 1e3, color='red',  label='above midplane', **kw_upper)
-        ax3.plot(p_bip3[lower3], bright3[lower3] / 1e3, color='blue', label='below midplane', **kw_lower)
+    u3 = upper3 & mask3
+    l3 = lower3 & mask3
 
-    ax3.axvline(0, color='grey', linewidth=0.5, linestyle=':')
-    ax3.set_xlabel('Chord radius (m)', fontsize=11)
-    ax3.set_ylabel('Brightness (kW/m²)', fontsize=11)
-    ax3.set_title('Array 3 (SXR)', fontsize=11)
-    ax3.legend(fontsize=9)
+    if logscale:
+        b3u = np.clip(bright3[u3] / 1e3, 1e-3, None)
+        b3l = np.clip(bright3[l3] / 1e3, 1e-3, None)
+        ax3.semilogy(p_bip3[u3], b3u, color="red", label="above midplane", **kw_upper)
+        ax3.semilogy(p_bip3[l3], b3l, color="blue", label="below midplane", **kw_lower)
+    else:
+        ax3.plot(p_bip3[u3], bright3[u3] / 1e3, color="red", label="above midplane", **kw_upper)
+        ax3.plot(p_bip3[l3], bright3[l3] / 1e3, color="blue", label="below midplane", **kw_lower)
+
+    ax3.axvline(0, color="grey", linewidth=0.5, linestyle=":")
+    ax3.set_xlabel(r"Impact parameter  $p$  (m)")
+    ax3.set_ylabel(r"Brightness  (kW m$^{-2}$)")
+    ax3.set_title("Array 3 (SXR)")
+    ax3.legend()
     ax3.grid(True, alpha=0.3)
 
-    # ---- Panel C: Midplane emissivity ----------------------------------
+    # ---- Panel C: Midplane emissivity (minor-radius axis) ---------------
     axE = axes[2]
     if ok and emiss_mid is not None:
         emiss_kW = emiss_mid / 1e3
+        r_minor_em = (r_em - r_magaxis) if r_magaxis is not None else r_em
+        xlabel_em = r"Minor radius  $r = R - R_0$  (m)" if r_magaxis is not None else r"$R$  (m)"
+        title_em = (
+            f"Midplane emissivity  ($Z \\approx$ {z_em[z_mid_idx]*100:.0f} cm)"
+            if r_magaxis is None
+            else f"Midplane emissivity  ($R_0 \\approx$ {r_magaxis:.3f} m)"
+        )
+
         if logscale:
-            axE.semilogy(r_em, np.clip(emiss_kW, 1e-3, None),
-                         color='green', linewidth=1.5, marker='.')
+            axE.semilogy(
+                r_minor_em, np.clip(emiss_kW, 1e-3, None), color="green", linewidth=1.5, marker="."
+            )
         else:
-            axE.plot(r_em, emiss_kW, color='green', linewidth=1.5, marker='.',
-                     markersize=4)
-        axE.set_xlabel('R (m)', fontsize=11)
-        axE.set_ylabel('Emissivity (kW/m³)', fontsize=11)
-        axE.set_title(f'Midplane emissivity (Z ≈ {z_em[z_mid_idx]*100:.0f} cm)', fontsize=11)
+            axE.plot(r_minor_em, emiss_kW, color="green", linewidth=1.5, marker=".", markersize=4)
+        axE.axvline(0, color="grey", linewidth=0.5, linestyle=":")
+        axE.set_xlabel(xlabel_em)
+        axE.set_ylabel(r"Emissivity  (kW m$^{-3}$)")
+        axE.set_title(title_em)
         axE.grid(True, alpha=0.3)
 
-        # ---- Dual axis: normalised brightness scale for visual comparison ---
-        # Normalise both curves to their peak to overlay profile shapes
-        fig2, ax_cmp = plt.subplots(figsize=(6.0, 4.0), tight_layout=True)
+        # ---- Normalised profile comparison on a shared minor-radius axis ----
+        # brightness p_bip3 (signed) and emissivity (R - R0) are both in metres
+        # of minor radius, so they now share a common physical x-axis:
+        #   negative r → inboard / below-midplane chords
+        #   positive r → outboard / above-midplane chords
+        fig2, ax_cmp = plt.subplots(figsize=(6.5, 4.5), tight_layout=True)
 
-        # Construct a 1-D brightness profile by averaging upper and lower for
-        # array 3 (using unsigned radii) as a proxy for the line integral
-        b3_norm  = bright3 / np.nanmax(np.abs(bright3))
-        em_norm  = emiss_mid / np.nanmax(np.abs(emiss_mid)) if np.nanmax(np.abs(emiss_mid)) > 0 else emiss_mid
+        b3_max = float(np.nanmax(np.abs(bright3[mask3]))) or 1.0
+        em_peak = float(np.nanmax(np.abs(emiss_mid))) or 1.0
+        b3_norm = bright3 / b3_max
+        em_norm = emiss_mid / em_peak
 
-        ax_cmp.plot(np.abs(p_bip3[upper3]), b3_norm[upper3],
-                    color='red',   linewidth=1.5, marker='.', markersize=5,
-                    label='Array 3 brightness (above, normalised)')
-        ax_cmp.plot(np.abs(p_bip3[lower3]), b3_norm[lower3],
-                    color='blue',  linewidth=1.5, marker='.', markersize=5,
-                    linestyle='--', label='Array 3 brightness (below, normalised)')
-        ax_cmp.plot(r_em, em_norm,
-                    color='green', linewidth=2.0, marker=None,
-                    label='Midplane emissivity (normalised)')
-        ax_cmp.set_xlabel('R  or  |p|  (m)', fontsize=12)
-        ax_cmp.set_ylabel('Normalised amplitude', fontsize=12)
-        ax_cmp.set_title(
-            f'Profile comparison:  shot {shot},  t ≈ {t_actual:.3f} s',
-            fontsize=12)
-        ax_cmp.legend(fontsize=9)
-        ax_cmp.set_xlim(left=0)
+        # Sort each curve by its x-coordinate for a smooth line
+        iu = np.argsort(p_bip3[u3])
+        il = np.argsort(p_bip3[l3])
+        iem = np.argsort(r_minor_em)
+
+        ax_cmp.plot(
+            p_bip3[u3][iu],
+            b3_norm[u3][iu],
+            color="red",
+            linewidth=1.5,
+            marker=".",
+            markersize=5,
+            label="Array 3  (above midplane, norm.)",
+        )
+        ax_cmp.plot(
+            p_bip3[l3][il],
+            b3_norm[l3][il],
+            color="blue",
+            linewidth=1.5,
+            marker=".",
+            markersize=5,
+            linestyle="--",
+            label="Array 3  (below midplane, norm.)",
+        )
+        ax_cmp.plot(
+            r_minor_em[iem],
+            em_norm[iem],
+            color="green",
+            linewidth=2.0,
+            label="Midplane emissivity  (norm.)",
+        )
+        ax_cmp.axvline(
+            0, color="grey", linewidth=0.6, linestyle=":", label="$r = 0$  (magnetic axis)"
+        )
+        ax_cmp.set_xlabel(r"Minor radius  $r$  (m)")
+        ax_cmp.set_ylabel("Normalised amplitude")
+        ax_cmp.set_title(f"Profile comparison:  shot {shot},  $t \\approx$ {t_actual:.3f} s")
+        ax_cmp.legend()
         ax_cmp.grid(True, alpha=0.3)
 
         if save:
-            fig2.savefig(save.replace('.', '_normalised.', 1), dpi=150,
-                         bbox_inches='tight')
-            print(f'Normalised comparison saved.')
+            fig2.savefig(save.replace(".", "_normalised.", 1), dpi=150, bbox_inches="tight")
+            print("Normalised comparison saved.")
     else:
-        axE.text(0.5, 0.5, 'Inversion failed', transform=axE.transAxes,
-                 ha='center', va='center', fontsize=12, color='red')
+        axE.text(
+            0.5,
+            0.5,
+            "Inversion failed",
+            transform=axE.transAxes,
+            ha="center",
+            va="center",
+            fontsize=12,
+            color="red",
+        )
 
     if save:
-        fig.savefig(save, dpi=150, bbox_inches='tight')
-        print(f'Main figure saved to {save}')
+        fig.savefig(save, dpi=150, bbox_inches="tight")
+        print(f"Main figure saved to {save}")
 
     return fig, axes
 
@@ -307,21 +401,36 @@ def compare_brightness_emissivity(
 # Command-line entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     """Console entry point: ``xtomo-compare``."""
     parser = argparse.ArgumentParser(
-        description='Compare XTOMO brightness profiles with inverted emissivity')
-    parser.add_argument('shot',  type=int,   help='MDS shot number')
-    parser.add_argument('time',  type=float, help='Time to plot [s]')
-    parser.add_argument('--lmax',    type=int,   default=15)
-    parser.add_argument('--svd-tol', type=float, default=0.1,
-                        dest='svd_tol')
-    parser.add_argument('--efit-tree', default='analysis',
-                        dest='efit_tree')
-    parser.add_argument('--logscale', action='store_true',
-                        help='Use logarithmic y-axis for brightness panels')
-    parser.add_argument('--save', type=str, default='',
-                        help='Save figure to this file path')
+        description="Compare XTOMO brightness profiles with inverted emissivity"
+    )
+    parser.add_argument("shot", type=int, help="MDS shot number")
+    parser.add_argument("time", type=float, help="Time to plot [s]")
+    parser.add_argument("--lmax", type=int, default=15)
+    parser.add_argument("--svd-tol", type=float, default=0.1, dest="svd_tol")
+    parser.add_argument("--efit-tree", default="analysis", dest="efit_tree")
+    parser.add_argument(
+        "--logscale", action="store_true", help="Use logarithmic y-axis for brightness panels"
+    )
+    parser.add_argument("--save", type=str, default="", help="Save figure to this file path")
+    parser.add_argument(
+        "--no-zero-filter",
+        action="store_true",
+        help="Keep near-zero interior chords in brightness plots",
+    )
+    parser.add_argument(
+        "--zero-threshold",
+        type=float,
+        default=0.02,
+        dest="zero_chord_threshold",
+        help="Fraction of array max below which a chord is masked (default 0.02)",
+    )
+    parser.add_argument(
+        "--no-latex", action="store_true", help="Do not apply LaTeX/CM serif font style"
+    )
     args = parser.parse_args()
 
     compare_brightness_emissivity(
@@ -332,9 +441,12 @@ def main() -> None:
         efit_tree=args.efit_tree,
         logscale=args.logscale,
         save=args.save,
+        remove_zero_chords=not args.no_zero_filter,
+        zero_chord_threshold=args.zero_chord_threshold,
+        use_latex_style=not args.no_latex,
     )
     plt.show()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
