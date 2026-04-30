@@ -116,6 +116,8 @@ def compare_brightness_emissivity(
     save: str = "",
     remove_zero_chords: bool = True,
     zero_chord_threshold: float = 0.02,
+    mask_gradient_spikes: bool = False,
+    gradient_spike_threshold: float = 1500.0,
     mask_inversion_chords: bool = True,
     use_latex_style: bool = True,
 ):
@@ -140,6 +142,9 @@ def compare_brightness_emissivity(
     save                  : if non-empty, save figure to this path (e.g. "out.pdf")
     remove_zero_chords    : mask interior chords whose peak amplitude < threshold
     zero_chord_threshold  : fraction of array maximum below which a chord is masked
+    mask_gradient_spikes  : mask isolated high chords using an absolute adjacent
+                            brightness-jump threshold on the selected profile
+    gradient_spike_threshold : absolute spike threshold [W/m^2]
     mask_inversion_chords : apply the same chord mask to the inversion equations
     use_latex_style       : apply Computer Modern serif font style to all figures
     """
@@ -183,28 +188,34 @@ def compare_brightness_emissivity(
     upper3 = p_bip3 >= 0
     lower3 = ~upper3
 
-    # ---- Zero-chord masking --------------------------------------------
-    # Remove interior chords whose peak amplitude is below threshold * max.
-    # Edge chords (indices 0-1 and 36-37) are always retained.
-    if remove_zero_chords:
+    # ---- Chord masking --------------------------------------------------
+    if remove_zero_chords or mask_gradient_spikes:
         mask1, mask3, inversion_mask_auto = build_inversion_chord_mask(
             all1,
             all3,
+            apply_zero_mask=remove_zero_chords,
             threshold=zero_chord_threshold,
             edge_keep=2,
+            profile_array1=bright1 if mask_gradient_spikes else None,
+            profile_array3=bright3 if mask_gradient_spikes else None,
+            chord_positions_array1=p_bip1 if mask_gradient_spikes else None,
+            chord_positions_array3=p_bip3 if mask_gradient_spikes else None,
+            max_gradient_abs=gradient_spike_threshold if mask_gradient_spikes else None,
         )
         n_drop1 = 38 - int(mask1.sum())
         n_drop3 = 38 - int(mask3.sum())
         if n_drop1:
-            print(f"  Masking {n_drop1} zeroed chord(s) from array 1")
+            print(f"  Masking {n_drop1} chord(s) from array 1")
         if n_drop3:
-            print(f"  Masking {n_drop3} zeroed chord(s) from array 3")
+            print(f"  Masking {n_drop3} chord(s) from array 3")
     else:
         mask1 = np.ones(38, dtype=bool)
         mask3 = np.ones(38, dtype=bool)
         inversion_mask_auto = None
 
-    if remove_zero_chords and mask_inversion_chords:
+    if (remove_zero_chords or mask_gradient_spikes) and mask_inversion_chords:
+        if inversion_mask_auto is None:
+            raise RuntimeError("Internal error: expected a chord mask but none was built.")
         inversion_chord_mask = inversion_mask_auto
         print(f"  Inversion will use {int(inversion_chord_mask.sum())}/76 chords")
     else:
@@ -269,15 +280,41 @@ def compare_brightness_emissivity(
     kw_lower = {"marker": ".", "markersize": 4, "linewidth": 1.2, "linestyle": "--"}
     u1 = upper1 & mask1
     l1 = lower1 & mask1
+    x1_ex = p_bip1[~mask1]
 
     if logscale:
         b1u = np.clip(bright1[u1] / 1e3, 1e-3, None)
         b1l = np.clip(bright1[l1] / 1e3, 1e-3, None)
-        ax1.semilogy(p_bip1[u1], b1u, color="red", label="above midplane", **kw_upper)
-        ax1.semilogy(p_bip1[l1], b1l, color="blue", label="below midplane", **kw_lower)
+        ax1.semilogy(p_bip1[u1], b1u, color="red", label="Outboard", **kw_upper)
+        ax1.semilogy(p_bip1[l1], b1l, color="blue", label="Inboard", **kw_lower)
+        if x1_ex.size > 0:
+            y1_ex = np.clip(bright1[~mask1] / 1e3, 1e-3, None)
+            ax1.scatter(
+                x1_ex,
+                y1_ex,
+                s=22,
+                facecolors="none",
+                edgecolors="0.55",
+                linewidths=1.0,
+                alpha=0.9,
+                label="Excluded datapoints",
+                zorder=1,
+            )
     else:
-        ax1.plot(p_bip1[u1], bright1[u1] / 1e3, color="red", label="above midplane", **kw_upper)
-        ax1.plot(p_bip1[l1], bright1[l1] / 1e3, color="blue", label="below midplane", **kw_lower)
+        ax1.plot(p_bip1[u1], bright1[u1] / 1e3, color="red", label="Outboard", **kw_upper)
+        ax1.plot(p_bip1[l1], bright1[l1] / 1e3, color="blue", label="Inboard", **kw_lower)
+        if x1_ex.size > 0:
+            ax1.scatter(
+                x1_ex,
+                bright1[~mask1] / 1e3,
+                s=22,
+                facecolors="none",
+                edgecolors="0.55",
+                linewidths=1.0,
+                alpha=0.9,
+                label="Excluded datapoints",
+                zorder=1,
+            )
 
     ax1.axvline(0, color="grey", linewidth=0.5, linestyle=":")
     ax1.set_xlabel(r"Impact parameter  $p$  (m)")
@@ -290,15 +327,41 @@ def compare_brightness_emissivity(
     ax3 = axes[1]
     u3 = upper3 & mask3
     l3 = lower3 & mask3
+    x3_ex = p_bip3[~mask3]
 
     if logscale:
         b3u = np.clip(bright3[u3] / 1e3, 1e-3, None)
         b3l = np.clip(bright3[l3] / 1e3, 1e-3, None)
-        ax3.semilogy(p_bip3[u3], b3u, color="red", label="above midplane", **kw_upper)
-        ax3.semilogy(p_bip3[l3], b3l, color="blue", label="below midplane", **kw_lower)
+        ax3.semilogy(p_bip3[u3], b3u, color="red", label="Above midplane", **kw_upper)
+        ax3.semilogy(p_bip3[l3], b3l, color="blue", label="Below midplane", **kw_lower)
+        if x3_ex.size > 0:
+            y3_ex = np.clip(bright3[~mask3] / 1e3, 1e-3, None)
+            ax3.scatter(
+                x3_ex,
+                y3_ex,
+                s=22,
+                facecolors="none",
+                edgecolors="0.55",
+                linewidths=1.0,
+                alpha=0.9,
+                label="Excluded datapoints",
+                zorder=1,
+            )
     else:
-        ax3.plot(p_bip3[u3], bright3[u3] / 1e3, color="red", label="above midplane", **kw_upper)
-        ax3.plot(p_bip3[l3], bright3[l3] / 1e3, color="blue", label="below midplane", **kw_lower)
+        ax3.plot(p_bip3[u3], bright3[u3] / 1e3, color="red", label="Above midplane", **kw_upper)
+        ax3.plot(p_bip3[l3], bright3[l3] / 1e3, color="blue", label="Below midplane", **kw_lower)
+        if x3_ex.size > 0:
+            ax3.scatter(
+                x3_ex,
+                bright3[~mask3] / 1e3,
+                s=22,
+                facecolors="none",
+                edgecolors="0.55",
+                linewidths=1.0,
+                alpha=0.9,
+                label="Excluded datapoints",
+                zorder=1,
+            )
 
     ax3.axvline(0, color="grey", linewidth=0.5, linestyle=":")
     ax3.set_xlabel(r"Impact parameter  $p$  (m)")
@@ -437,12 +500,24 @@ def main() -> None:
         help="Fraction of array max below which a chord is masked (default 0.02)",
     )
     parser.add_argument(
+        "--mask-gradient-spikes",
+        action="store_true",
+        help="Mask isolated high chords using an absolute adjacent-channel gradient threshold",
+    )
+    parser.add_argument(
+        "--gradient-spike-threshold",
+        type=float,
+        default=1500.0,
+        dest="gradient_spike_threshold",
+        help="Absolute adjacent-channel spike threshold in W/m^2",
+    )
+    parser.add_argument(
         "--no-latex", action="store_true", help="Do not apply LaTeX/CM serif font style"
     )
     parser.add_argument(
         "--no-inversion-mask",
         action="store_true",
-        help="Do not apply the zero-chord filter to the inversion system",
+        help="Do not apply chord masking to the inversion system",
     )
     args = parser.parse_args()
 
@@ -456,6 +531,8 @@ def main() -> None:
         save=args.save,
         remove_zero_chords=not args.no_zero_filter,
         zero_chord_threshold=args.zero_chord_threshold,
+        mask_gradient_spikes=args.mask_gradient_spikes,
+        gradient_spike_threshold=args.gradient_spike_threshold,
         mask_inversion_chords=not args.no_inversion_mask,
         use_latex_style=not args.no_latex,
     )

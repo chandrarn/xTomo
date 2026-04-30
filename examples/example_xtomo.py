@@ -29,6 +29,7 @@ import argparse
 import sys
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Package imports — requires `pip install -e .` from the xTomo project root
@@ -40,7 +41,7 @@ try:
         plot_core_emissivity,
     )
     from xtomo.chord_masking import build_inversion_chord_mask
-    from xtomo.xtomo_mds import read_xray_brightness
+    from xtomo.xtomo_mds import bipolar_radii, read_xray_brightness
 except ImportError as exc:
     sys.exit(
         f"Cannot import the 'xtomo' package: {exc}\n"
@@ -59,6 +60,7 @@ DEFAULT_TSTOP = 1.6  # s  — end   of inversion window
 DEFAULT_DT = 0.05  # s  — time step between reconstructions
 DEFAULT_LMAX = 15  #     — max radial Bessel harmonic
 DEFAULT_EFIT = "analysis"
+DEFAULT_GRADIENT_SPIKE_THRESHOLD = 1500.0  # W/m^2
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +82,8 @@ def run(
     novessel: bool = False,
     remove_zero_chords: bool = True,
     zero_chord_threshold: float = 0.02,
+    mask_gradient_spikes: bool = False,
+    gradient_spike_threshold: float = DEFAULT_GRADIENT_SPIKE_THRESHOLD,
     mask_inversion_chords: bool = True,
 ) -> None:
     """
@@ -98,6 +102,9 @@ def run(
     novessel     : skip vessel geometry on the 2-D plot
     remove_zero_chords    : mask interior near-zero chords
     zero_chord_threshold  : chord mask threshold as fraction of array max
+    mask_gradient_spikes  : mask isolated high chords using an absolute adjacent
+                            brightness-jump threshold on the selected profile
+    gradient_spike_threshold : absolute spike threshold [W/m^2]
     mask_inversion_chords : apply chord masking to inversion equations
     """
 
@@ -113,15 +120,23 @@ def run(
     print("\n[1/3]  Running tomographic inversion ...")
 
     inversion_chord_mask = None
-    if remove_zero_chords and mask_inversion_chords:
-        print("  Building automatic interior-chord mask for inversion ...")
-        _, b1_all, _, _ = read_xray_brightness(shot, array=1, fix_bad_channels=True)
-        _, b3_all, _, _ = read_xray_brightness(shot, array=3, fix_bad_channels=True)
+    if (remove_zero_chords or mask_gradient_spikes) and mask_inversion_chords:
+        print("  Building automatic chord mask for inversion ...")
+        time1_all, b1_all, r1, a1 = read_xray_brightness(shot, array=1, fix_bad_channels=True)
+        time3_all, b3_all, r3, a3 = read_xray_brightness(shot, array=3, fix_bad_channels=True)
+        t_idx1 = int(np.argmin(np.abs(time1_all - time)))
+        t_idx3 = int(np.argmin(np.abs(time3_all - time)))
         _mask1, _mask3, inversion_chord_mask = build_inversion_chord_mask(
             b1_all,
             b3_all,
+            apply_zero_mask=remove_zero_chords,
             threshold=zero_chord_threshold,
             edge_keep=2,
+            profile_array1=b1_all[t_idx1, :] if mask_gradient_spikes else None,
+            profile_array3=b3_all[t_idx3, :] if mask_gradient_spikes else None,
+            chord_positions_array1=bipolar_radii(r1, a1, 1) if mask_gradient_spikes else None,
+            chord_positions_array3=bipolar_radii(r3, a3, 3) if mask_gradient_spikes else None,
+            max_gradient_abs=gradient_spike_threshold if mask_gradient_spikes else None,
         )
         print(f"  Inversion will use {int(inversion_chord_mask.sum())}/76 chords")
 
@@ -186,6 +201,8 @@ def run(
         save=save_cmp,
         remove_zero_chords=remove_zero_chords,
         zero_chord_threshold=zero_chord_threshold,
+        mask_gradient_spikes=mask_gradient_spikes,
+        gradient_spike_threshold=gradient_spike_threshold,
         mask_inversion_chords=mask_inversion_chords,
     )
 
@@ -249,9 +266,21 @@ def main() -> None:
         help="Fraction of array max below which interior chords are masked",
     )
     parser.add_argument(
+        "--mask-gradient-spikes",
+        action="store_true",
+        help="Mask isolated high chords using an absolute adjacent-channel gradient threshold",
+    )
+    parser.add_argument(
+        "--gradient-spike-threshold",
+        type=float,
+        default=DEFAULT_GRADIENT_SPIKE_THRESHOLD,
+        dest="gradient_spike_threshold",
+        help="Absolute adjacent-channel spike threshold in W/m^2",
+    )
+    parser.add_argument(
         "--no-inversion-mask",
         action="store_true",
-        help="Do not apply zero-chord filtering to inversion equations",
+        help="Do not apply chord masking to inversion equations",
     )
     args = parser.parse_args()
 
@@ -269,6 +298,8 @@ def main() -> None:
         novessel=args.novessel,
         remove_zero_chords=not args.no_zero_filter,
         zero_chord_threshold=args.zero_chord_threshold,
+        mask_gradient_spikes=args.mask_gradient_spikes,
+        gradient_spike_threshold=args.gradient_spike_threshold,
         mask_inversion_chords=not args.no_inversion_mask,
     )
 
