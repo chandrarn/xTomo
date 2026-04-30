@@ -150,7 +150,7 @@ def run(
     # Step 2 — 2-D emissivity plot on poloidal cross-section
     # ------------------------------------------------------------------
     print("\n[2/3]  Plotting 2-D emissivity ...")
-    save_2d = f"{save_prefix}_emissivity_2d.pdf" if save_prefix else ""
+    save_2d = f"{save_prefix}_emissivity_2d_{shot}_t{time:.3f}.pdf" if save_prefix else ""
     plot_core_emissivity(
         shot,
         emissivity,
@@ -176,7 +176,7 @@ def run(
     # Step 3 — Brightness-vs-emissivity comparison
     # ------------------------------------------------------------------
     print("\n[3/3]  Comparing chord brightness with inverted emissivity ...")
-    save_cmp = f"{save_prefix}_brightness_comparison.pdf" if save_prefix else ""
+    save_cmp = f"{save_prefix}_brightness_comparison_{shot}_t{time:.3f}.pdf" if save_prefix else ""
     fig_cmp, axes_cmp = compare_brightness_emissivity(
         shot,
         time,

@@ -28,6 +28,17 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from .xtomo_mds import read_efit_psi, read_vessel_tiles
 
 # ---------------------------------------------------------------------------
+# Defaults (edit these directly or override on the command line)
+# ---------------------------------------------------------------------------
+DEFAULT_SHOT = 1120927023  # 1140221013
+DEFAULT_TIME = 1.2  # s  — time slice to visualise
+DEFAULT_TSTART = 0.8  # s  — start of inversion window
+DEFAULT_TSTOP = 1.6  # s  — end   of inversion window
+DEFAULT_DT = 0.05  # s  — time step between reconstructions
+DEFAULT_LMAX = 15  #     — max radial Bessel harmonic
+DEFAULT_EFIT = "analysis"
+
+# ---------------------------------------------------------------------------
 # Main plotting function
 # ---------------------------------------------------------------------------
 
@@ -223,12 +234,12 @@ def main() -> None:
     from xtomo.core_xray_emissivity import core_xray_emissivity
 
     parser = argparse.ArgumentParser(description="Plot 2-D XTOMO emissivity for a C-Mod shot")
-    parser.add_argument("shot", type=int, help="MDS shot number")
-    parser.add_argument("tplot", type=float, help="Time to plot [s]")
-    parser.add_argument("--tstart", type=float, default=None)
-    parser.add_argument("--tstop", type=float, default=None)
-    parser.add_argument("--dt", type=float, default=0.05)
-    parser.add_argument("--lmax", type=int, default=15)
+    parser.add_argument("shot", type=int, default=DEFAULT_SHOT, help="MDS shot number")
+    parser.add_argument("tplot", type=float, default=DEFAULT_TIME, help="Time to plot [s]")
+    parser.add_argument("--tstart", type=float, default=DEFAULT_TSTART)
+    parser.add_argument("--tstop", type=float, default=DEFAULT_TSTOP)
+    parser.add_argument("--dt", type=float, default=DEFAULT_DT)
+    parser.add_argument("--lmax", type=int, default=DEFAULT_LMAX)
     parser.add_argument("--noflux", action="store_true")
     parser.add_argument("--novessel", action="store_true")
     parser.add_argument("--cmap", type=str, default="hot")
