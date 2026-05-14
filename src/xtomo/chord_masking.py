@@ -36,7 +36,7 @@ def build_array_zero_chord_mask(
     if nchords == 0:
         raise ValueError("signals has zero chords.")
 
-    amp = np.nan_to_num(np.nanmax(np.abs(signals), axis=0), nan=0.0)
+    amp = np.nan_to_num(np.nanmax(signals, axis=0), nan=0.0)
     max_amp = max(float(np.max(amp)), 1e-30)
 
     mask = np.ones(nchords, dtype=bool)
@@ -123,16 +123,21 @@ def build_inversion_chord_mask(
     """
     Build array-1, array-3, and concatenated inversion masks.
     """
+    sig1 = np.asarray(signals_array1, dtype=float)
+    sig3 = np.asarray(signals_array3, dtype=float)
+
+    if sig1.ndim != 2 or sig3.ndim != 2:
+        raise ValueError(
+            "signals_array1 and signals_array3 must both be 2-D "
+            f"(ntimes, nchords); got {sig1.shape} and {sig3.shape}."
+        )
+
     if apply_zero_mask:
-        mask1 = build_array_zero_chord_mask(
-            signals_array1, threshold=threshold, edge_keep=edge_keep
-        )
-        mask3 = build_array_zero_chord_mask(
-            signals_array3, threshold=threshold, edge_keep=edge_keep
-        )
+        mask1 = build_array_zero_chord_mask(sig1, threshold=threshold, edge_keep=edge_keep)
+        mask3 = build_array_zero_chord_mask(sig3, threshold=threshold, edge_keep=edge_keep)
     else:
-        mask1 = np.ones(signals_array1.shape[1], dtype=bool)
-        mask3 = np.ones(signals_array3.shape[1], dtype=bool)
+        mask1 = np.ones(sig1.shape[1], dtype=bool)
+        mask3 = np.ones(sig3.shape[1], dtype=bool)
 
     if max_gradient_abs is not None:
         if profile_array1 is None or profile_array3 is None:

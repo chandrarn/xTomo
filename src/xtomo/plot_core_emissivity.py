@@ -2,6 +2,8 @@
 plot_core_emissivity.py
 =======================
 Python rewrite of plot_core_emissivity.pro (IDL / C-Mod XTOMO).
+Original at: /mnt/home/granetz/xtomo/plot_core_emissivity.pro
+And: /mnt/home/granetz/xtomo/plot_xtomo_profile_for_Rice.m
 
 Plots the 2-D reconstructed x-ray emissivity on the poloidal cross-section,
 with optional overlays of EFIT flux contours and the C-Mod vacuum vessel /

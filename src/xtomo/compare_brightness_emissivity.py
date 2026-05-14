@@ -278,9 +278,11 @@ def compare_brightness_emissivity(
     ax1 = axes[0]
     kw_upper = {"marker": ".", "markersize": 4, "linewidth": 1.2}
     kw_lower = {"marker": ".", "markersize": 4, "linewidth": 1.2, "linestyle": "--"}
-    u1 = upper1 & mask1
-    l1 = lower1 & mask1
-    x1_ex = p_bip1[~mask1]
+    valid1 = mask1 & np.isfinite(bright1) & (bright1 >= 0.0)
+    ex1 = ~valid1
+    u1 = upper1 & valid1
+    l1 = lower1 & valid1
+    x1_ex = p_bip1[ex1]
 
     if logscale:
         b1u = np.clip(bright1[u1] / 1e3, 1e-3, None)
@@ -288,7 +290,8 @@ def compare_brightness_emissivity(
         ax1.semilogy(p_bip1[u1], b1u, color="red", label="Outboard", **kw_upper)
         ax1.semilogy(p_bip1[l1], b1l, color="blue", label="Inboard", **kw_lower)
         if x1_ex.size > 0:
-            y1_ex = np.clip(bright1[~mask1] / 1e3, 1e-3, None)
+            y1_ex_raw = np.where(np.isfinite(bright1[ex1]), bright1[ex1] / 1e3, 0.0)
+            y1_ex = np.clip(np.maximum(y1_ex_raw, 0.0), 1e-3, None)
             ax1.scatter(
                 x1_ex,
                 y1_ex,
@@ -304,9 +307,11 @@ def compare_brightness_emissivity(
         ax1.plot(p_bip1[u1], bright1[u1] / 1e3, color="red", label="Outboard", **kw_upper)
         ax1.plot(p_bip1[l1], bright1[l1] / 1e3, color="blue", label="Inboard", **kw_lower)
         if x1_ex.size > 0:
+            y1_ex = np.where(np.isfinite(bright1[ex1]), bright1[ex1] / 1e3, 0.0)
+            y1_ex = np.maximum(y1_ex, 0.0)
             ax1.scatter(
                 x1_ex,
-                bright1[~mask1] / 1e3,
+                y1_ex,
                 s=22,
                 facecolors="none",
                 edgecolors="0.55",
@@ -325,9 +330,11 @@ def compare_brightness_emissivity(
 
     # ---- Panel B: Array 3 brightness -----------------------------------
     ax3 = axes[1]
-    u3 = upper3 & mask3
-    l3 = lower3 & mask3
-    x3_ex = p_bip3[~mask3]
+    valid3 = mask3 & np.isfinite(bright3) & (bright3 >= 0.0)
+    ex3 = ~valid3
+    u3 = upper3 & valid3
+    l3 = lower3 & valid3
+    x3_ex = p_bip3[ex3]
 
     if logscale:
         b3u = np.clip(bright3[u3] / 1e3, 1e-3, None)
@@ -335,7 +342,8 @@ def compare_brightness_emissivity(
         ax3.semilogy(p_bip3[u3], b3u, color="red", label="Above midplane", **kw_upper)
         ax3.semilogy(p_bip3[l3], b3l, color="blue", label="Below midplane", **kw_lower)
         if x3_ex.size > 0:
-            y3_ex = np.clip(bright3[~mask3] / 1e3, 1e-3, None)
+            y3_ex_raw = np.where(np.isfinite(bright3[ex3]), bright3[ex3] / 1e3, 0.0)
+            y3_ex = np.clip(np.maximum(y3_ex_raw, 0.0), 1e-3, None)
             ax3.scatter(
                 x3_ex,
                 y3_ex,
@@ -351,9 +359,11 @@ def compare_brightness_emissivity(
         ax3.plot(p_bip3[u3], bright3[u3] / 1e3, color="red", label="Above midplane", **kw_upper)
         ax3.plot(p_bip3[l3], bright3[l3] / 1e3, color="blue", label="Below midplane", **kw_lower)
         if x3_ex.size > 0:
+            y3_ex = np.where(np.isfinite(bright3[ex3]), bright3[ex3] / 1e3, 0.0)
+            y3_ex = np.maximum(y3_ex, 0.0)
             ax3.scatter(
                 x3_ex,
-                bright3[~mask3] / 1e3,
+                y3_ex,
                 s=22,
                 facecolors="none",
                 edgecolors="0.55",

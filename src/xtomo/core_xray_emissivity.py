@@ -546,6 +546,7 @@ def core_xray_emissivity(
     center_idx_old = -1
     rnorm_idx_old = -1
     pseudo_inverse = None
+    line_integral_matrix = None
     harmonics_mat = None
     rc = zc = rn = None
 
@@ -622,6 +623,7 @@ def core_xray_emissivity(
             A = _build_line_integral_matrix(
                 phi, pnorm, cos_m_vals, sin_m_vals, lmax, bessel_zeros, jprimes
             )
+            line_integral_matrix = A
 
             U, s_vals, Vh = np.linalg.svd(A, full_matrices=False)
             s_inv = np.where(np.abs(s_vals) >= svd_tol, 1.0 / s_vals, 0.0)
@@ -636,9 +638,27 @@ def core_xray_emissivity(
                 r_polar, theta, cos_m_vals, sin_m_vals, lmax, bessel_zeros
             )
 
-        # Solve for Fourier-Bessel coefficients
+        # Solve for Fourier-Bessel coefficients.
+        # Per-timepoint: ignore channels that are negative or non-finite.
         brightness_slice = brightness[time_index, chord_mask_arr]
-        coefficients = pseudo_inverse @ brightness_slice  # (num_coeffs,)
+        valid = np.isfinite(brightness_slice) & (brightness_slice >= 0.0)
+        if np.all(valid):
+            coefficients = pseudo_inverse @ brightness_slice  # (num_coeffs,)
+        else:
+            n_bad = int(valid.size - np.count_nonzero(valid))
+            if verbose:
+                print(
+                    f"     Ignoring {n_bad} negative/non-finite chord values "
+                    "for this time slice."
+                )
+
+            A_valid = line_integral_matrix[valid, :]
+            b_valid = brightness_slice[valid]
+
+            # Recompute a local pseudo-inverse for the surviving equations.
+            Uv, sv, Vhv = np.linalg.svd(A_valid, full_matrices=False)
+            s_inv_v = np.where(np.abs(sv) >= svd_tol, 1.0 / sv, 0.0)
+            coefficients = (Vhv.T * s_inv_v) @ Uv.T @ b_valid
 
         # Evaluate emissivity on the 2-D grid
         emiss1d = harmonics_mat @ coefficients  # (nr*nz,)
