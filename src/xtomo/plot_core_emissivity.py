@@ -116,12 +116,15 @@ def plot_core_emissivity(
     if ax is None:
         fig_ratio = (zmax_ax - zmin_ax) / (rmax_ax - rmin_ax)
         fig_w = 5.0
+        fig_extra_w = 0.45  # extra right margin for the colorbar label/units
         fig, ax = plt.subplots(
             1,
             1,
-            figsize=(fig_w, fig_w * fig_ratio),
-            layout="constrained",
+            figsize=(fig_w + fig_extra_w, fig_w * fig_ratio),
         )
+        ax_pos = ax.get_position()
+        width_scale = fig_w / (fig_w + fig_extra_w)
+        ax.set_position((ax_pos.x0, ax_pos.y0, ax_pos.width * width_scale, ax_pos.height))
         if hasattr(fig.canvas, "manager"):
             fig.canvas.manager.set_window_title(f"X-ray tomography  shot {shot}")
     else:
@@ -168,7 +171,8 @@ def plot_core_emissivity(
     )
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="4%", pad=0.08)
-    fig.colorbar(pcm, cax=cax, label="Emissivity (MW/m³)")
+    cbar = fig.colorbar(pcm, cax=cax)
+    cbar.set_label("Emissivity (MW/m³)", labelpad=4)
 
     # ---- EFIT flux contours ----------------------------------------------
     if not noflux:
