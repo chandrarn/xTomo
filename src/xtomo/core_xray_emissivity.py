@@ -21,6 +21,8 @@ NOTE: Write-to-tree (MDSput) calls present in the original IDL code are
 from __future__ import annotations
 
 import numpy as np
+import xarray as xr
+from scipy.interpolate import RegularGridInterpolator
 from scipy.special import jv
 
 from .xtomo_mds import (
@@ -28,6 +30,7 @@ from .xtomo_mds import (
     chord_radii_for_array,
     open_tree,
     read_efit_data,
+    read_efit_psi,
     read_tomography_settings,
     read_xray_brightness,
     read_xtomo_geometry,
@@ -336,7 +339,7 @@ def core_xray_emissivity(
     dr: float = 0.02,
     dz: float = 0.02,
     verbose: bool = True,
-):
+) -> xr.Dataset:
     """
     Compute 2-D soft-x-ray emissivity via Fourier-Bessel tomographic inversion.
 
@@ -364,11 +367,11 @@ def core_xray_emissivity(
 
     Returns
     -------
-    emissivity : ndarray (nr, nz, npts)  [W/m^3]
-    r          : ndarray (nr,)           [m]
-    z          : ndarray (nz,)           [m]
-    t          : ndarray (npts,)         [s]
-    status     : bool  (True = success)
+    xr.Dataset
+        Dataset with dimensions ``(r, z, time)`` containing:
+        - ``emissivity`` [W/m^3]
+        - ``psi_n``      [a.u.]
+        Plus 2-D coordinate grids ``R(r,z)`` and ``Z(r,z)``.
     """
     if cos_m_vals is None:
         cos_m_vals = [0, 1, 2]
@@ -541,14 +544,32 @@ def core_xray_emissivity(
 
     t_arr = np.zeros(npts, dtype=float)
     emissivity = np.zeros((nr, nz, npts), dtype=float)
+    psi_n_grid = np.full((nr, nz, npts), np.nan, dtype=float)
+
+    psi_times = None
+    psi_cube = None
+    psi_r = None
+    psi_z = None
+    psi_axis = None
+    psi_bndry = None
+    try:
+        psi_times, psi_cube, psi_r, psi_z, psi_axis, psi_bndry = read_efit_psi(shot, tree=efit_tree)
+    except Exception as exc:
+        if verbose:
+            print(f"WARNING: could not load EFIT psi grid; psi_n will be NaN ({exc})")
+
+    psi_idx_old = -1
+    psi_interp_slice = None
+    psi_norm_warned = False
 
     # Cache-invalidation flags: recompute SVD only when centre/rnorm changes
     center_idx_old = -1
     rnorm_idx_old = -1
     pseudo_inverse = None
-    line_integral_matrix = None
+    line_integral_matrix = np.zeros((0, num_coeffs), dtype=float)
     harmonics_mat = None
-    rc = zc = rn = None
+    r_polar = np.zeros_like(r1d)
+    rc = zc = rn = 0.0
 
     if verbose and ndet != ndet_total:
         print(f"Using {ndet} / {ndet_total} chords after masking.")
@@ -563,6 +584,97 @@ def core_xray_emissivity(
         rnorm_idx = int(np.argmin(np.abs(times[it] - _rnt_arr))) if _rnt_arr is not None else 0
 
         t_arr[it] = time[time_index]
+
+        if (
+            psi_cube is not None
+            and psi_times is not None
+            and psi_axis is not None
+            and psi_bndry is not None
+            and psi_r is not None
+            and psi_z is not None
+        ):
+            psi_idx = int(np.argmin(np.abs(t_arr[it] - psi_times)))
+            if psi_idx != psi_idx_old:
+                psi_slice = np.asarray(psi_cube[psi_idx], dtype=float)
+
+                # Build interpolator in native psi units first. This lets us
+                # anchor normalisation to the same psi source (gEQDSK psirz),
+                # avoiding sign/offset convention mismatch against aEQDSK nodes.
+                psi_native_interp = RegularGridInterpolator(
+                    (psi_r, psi_z),
+                    psi_slice,
+                    method="linear",
+                    bounds_error=False,
+                    fill_value=np.nan,
+                )
+
+                psi_axis_local = np.nan
+                psi_bndry_local = np.nan
+
+                if _rc_arr is not None and _zc_arr is not None and _ct_arr is not None:
+                    cidx = int(np.argmin(np.abs(psi_times[psi_idx] - _ct_arr)))
+                    psi_axis_local = float(
+                        psi_native_interp(np.array([[float(_rc_arr[cidx]), float(_zc_arr[cidx])]]))[
+                            0
+                        ]
+                    )
+
+                if (
+                    _rbbbs is not None
+                    and _zbbbs is not None
+                    and _nbbbs is not None
+                    and _rnt_arr is not None
+                ):
+                    bidx = int(np.argmin(np.abs(psi_times[psi_idx] - _rnt_arr)))
+                    nb = int(_nbbbs[bidx])
+                    if nb > 0:
+                        rb = np.asarray(_rbbbs[bidx, :nb], dtype=float)
+                        zb = np.asarray(_zbbbs[bidx, :nb], dtype=float)
+                        psi_lcfs_samples = psi_native_interp(np.column_stack([rb, zb]))
+                        finite = np.isfinite(psi_lcfs_samples)
+                        if np.any(finite):
+                            psi_bndry_local = float(np.nanmedian(psi_lcfs_samples[finite]))
+
+                if np.isfinite(psi_axis_local) and np.isfinite(psi_bndry_local):
+                    psi_axis_ref = psi_axis_local
+                    psi_bndry_ref = psi_bndry_local
+                    if (
+                        not psi_norm_warned
+                        and psi_axis is not None
+                        and psi_bndry is not None
+                        and psi_idx < len(psi_axis)
+                        and psi_idx < len(psi_bndry)
+                    ):
+                        node_axis = float(psi_axis[psi_idx])
+                        node_bdry = float(psi_bndry[psi_idx])
+                        if np.sign(node_axis - node_bdry) != np.sign(psi_axis_ref - psi_bndry_ref):
+                            psi_norm_warned = True
+                            if verbose:
+                                print(
+                                    "WARNING: EFIT psi sign/order mismatch between "
+                                    "aEQDSK nodes and gEQDSK grid; using psirz-anchored normalisation."
+                                )
+                else:
+                    psi_axis_ref = float(psi_axis[psi_idx])
+                    psi_bndry_ref = float(psi_bndry[psi_idx])
+
+                denom = float(psi_bndry_ref - psi_axis_ref)
+                if abs(denom) < 1e-30:
+                    psi_native = np.full_like(psi_slice, np.nan, dtype=float)
+                else:
+                    psi_native = (psi_slice - psi_axis_ref) / denom
+
+                psi_interp = RegularGridInterpolator(
+                    (psi_r, psi_z),
+                    psi_native,
+                    method="linear",
+                    bounds_error=False,
+                    fill_value=np.nan,
+                )
+                psi_interp_slice = psi_interp(np.column_stack([r1d, z1d])).reshape(nr, nz)
+                psi_idx_old = psi_idx
+            psi_n_grid[:, :, it] = psi_interp_slice
+
         if verbose:
             print(f"Time = {t_arr[it]:9.6f} s  (step {it+1:5d} of {npts:5d})")
 
@@ -570,6 +682,8 @@ def core_xray_emissivity(
 
         if center_idx != center_idx_old:
             redo_matrix = True
+            if _rc_arr is None or _zc_arr is None:
+                raise RuntimeError("Internal error: centre arrays are not initialised.")
             rc = float(_rc_arr[center_idx])
             zc = float(_zc_arr[center_idx])
             center_idx_old = center_idx
@@ -577,6 +691,8 @@ def core_xray_emissivity(
         if rnorm_idx != rnorm_idx_old:
             redo_matrix = True
             if auto_calc_rnorm and _rbbbs is not None:
+                if _nbbbs is None or _zbbbs is None:
+                    raise RuntimeError("Internal error: LCFS arrays are not initialised.")
                 nb = int(_nbbbs[rnorm_idx])
                 rb = _rbbbs[rnorm_idx, :nb]
                 zb = _zbbbs[rnorm_idx, :nb]
@@ -680,7 +796,30 @@ def core_xray_emissivity(
     # )
     # conn.closeAllTrees()
 
-    return emissivity, r, z, t_arr, True
+    ds = xr.Dataset(
+        data_vars={
+            "emissivity": (("r", "z", "time"), emissivity),
+            "psi_n": (("r", "z", "time"), psi_n_grid),
+            "R": (("r", "z"), r2d),
+            "Z": (("r", "z"), z2d),
+        },
+        coords={
+            "r": r,
+            "z": z,
+            "time": t_arr,
+        },
+        attrs={
+            "shot": int(shot),
+            "status": True,
+            "efit_tree": efit_tree,
+        },
+    )
+    ds["emissivity"].attrs["units"] = "W/m^3"
+    ds["psi_n"].attrs["units"] = "arb"
+    ds["r"].attrs["units"] = "m"
+    ds["z"].attrs["units"] = "m"
+    ds["time"].attrs["units"] = "s"
+    return ds
 
 
 # ---------------------------------------------------------------------------
@@ -746,7 +885,7 @@ def main() -> None:
     parser.add_argument("--save", type=str, default="", help="Save results to this .npz file path")
     args = parser.parse_args()
 
-    emissivity, r, z, t, ok = core_xray_emissivity(
+    ds = core_xray_emissivity(
         args.shot,
         tstart=args.tstart,
         tstop=args.tstop,
@@ -758,13 +897,19 @@ def main() -> None:
         svd_tol=args.svd_tol,
     )
 
-    if ok:
-        print(f"\nDone.  Emissivity array shape: {emissivity.shape}")
-        if args.save:
-            np.savez(args.save, emissivity=emissivity, r=r, z=z, t=t, shot=args.shot)
-            print(f"Results saved to {args.save}")
-    else:
-        print("Calculation failed.")
+    emissivity = ds["emissivity"].values
+    print(f"\nDone.  Emissivity array shape: {emissivity.shape}")
+    if args.save:
+        np.savez(
+            args.save,
+            emissivity=emissivity,
+            psi_n=ds["psi_n"].values,
+            r=ds.coords["r"].values,
+            z=ds.coords["z"].values,
+            t=ds.coords["time"].values,
+            shot=args.shot,
+        )
+        print(f"Results saved to {args.save}")
 
 
 if __name__ == "__main__":

@@ -35,19 +35,35 @@ pre-commit install
 ## Quick start
 
 ```python
-from xtomo import core_xray_emissivity, plot_core_emissivity
+from xtomo import core_xray_emissivity, mask_cords, plot_core_emissivity
 
-# Run the tomographic inversion
-emissivity, r, z, t, ok = core_xray_emissivity(
+# Optional: build a 76-channel inversion mask first
+mask = mask_cords(
     1120927023,
-    tstart=0.8, tstop=1.4, dt=0.05,
-    use_efit_center=True,
-    auto_calc_rnorm=True,
+    1.2,
+    remove_zero_chords=True,
+    zero_chord_threshold=0.02,
 )
 
-# Plot a single time slice
+# Run the tomographic inversion (returns an xarray.Dataset)
+ds = core_xray_emissivity(
+    1120927023,
+    tstart=0.8,
+    tstop=1.4,
+    dt=0.05,
+    use_efit_center=True,
+    auto_calc_rnorm=True,
+    chord_mask=mask,
+)
+
+# Access either coordinate system:
+# - r/z vectors: ds.coords["r"], ds.coords["z"]
+# - psi grid:    ds["psi_n"] with dims (r, z, time)
+emissivity = ds["emissivity"].values  # shape: (nr, nz, nt)
+
+# Plot a single time slice (same output plot style as before)
 import matplotlib.pyplot as plt
-plot_core_emissivity(1120927023, emissivity, r, z, t, time=1.2)
+plot_core_emissivity(1120927023, ds, time=1.2)
 plt.show()
 ```
 

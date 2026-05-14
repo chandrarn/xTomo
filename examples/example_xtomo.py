@@ -29,7 +29,6 @@ import argparse
 import sys
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 # ---------------------------------------------------------------------------
 # Package imports — requires `pip install -e .` from the xTomo project root
@@ -38,10 +37,9 @@ try:
     from xtomo import (
         compare_brightness_emissivity,
         core_xray_emissivity,
+        mask_cords,
         plot_core_emissivity,
     )
-    from xtomo.chord_masking import build_inversion_chord_mask
-    from xtomo.xtomo_mds import bipolar_radii, read_xray_brightness
 except ImportError as exc:
     sys.exit(
         f"Cannot import the 'xtomo' package: {exc}\n"
@@ -122,25 +120,17 @@ def run(
     inversion_chord_mask = None
     if (remove_zero_chords or mask_gradient_spikes) and mask_inversion_chords:
         print("  Building automatic chord mask for inversion ...")
-        time1_all, b1_all, r1, a1 = read_xray_brightness(shot, array=1, fix_bad_channels=True)
-        time3_all, b3_all, r3, a3 = read_xray_brightness(shot, array=3, fix_bad_channels=True)
-        t_idx1 = int(np.argmin(np.abs(time1_all - time)))
-        t_idx3 = int(np.argmin(np.abs(time3_all - time)))
-        _mask1, _mask3, inversion_chord_mask = build_inversion_chord_mask(
-            b1_all,
-            b3_all,
-            apply_zero_mask=remove_zero_chords,
-            threshold=zero_chord_threshold,
-            edge_keep=2,
-            profile_array1=b1_all[t_idx1, :] if mask_gradient_spikes else None,
-            profile_array3=b3_all[t_idx3, :] if mask_gradient_spikes else None,
-            chord_positions_array1=bipolar_radii(r1, a1, 1) if mask_gradient_spikes else None,
-            chord_positions_array3=bipolar_radii(r3, a3, 3) if mask_gradient_spikes else None,
-            max_gradient_abs=gradient_spike_threshold if mask_gradient_spikes else None,
+        inversion_chord_mask = mask_cords(
+            shot,
+            time,
+            remove_zero_chords=remove_zero_chords,
+            zero_chord_threshold=zero_chord_threshold,
+            mask_gradient_spikes=mask_gradient_spikes,
+            gradient_spike_threshold=gradient_spike_threshold,
         )
         print(f"  Inversion will use {int(inversion_chord_mask.sum())}/76 chords")
 
-    emissivity, r, z, t, ok = core_xray_emissivity(
+    ds = core_xray_emissivity(
         shot,
         tstart=tstart,
         tstop=tstop,
@@ -152,9 +142,10 @@ def run(
         chord_mask=inversion_chord_mask,
     )
 
-    if not ok:
-        print("ERROR: Inversion failed — check MDSplus connectivity and shot number.")
-        return
+    emissivity = ds["emissivity"].values
+    r = ds.coords["r"].values
+    z = ds.coords["z"].values
+    t = ds.coords["time"].values
 
     print(f"  Emissivity array shape: {emissivity.shape}  (nr × nz × ntimes)")
     print(f"  R grid : {r[0]:.3f} – {r[-1]:.3f} m   ({len(r)} points)")
@@ -168,10 +159,7 @@ def run(
     save_2d = f"{save_prefix}_emissivity_2d_{shot}_t{time:.3f}.pdf" if save_prefix else ""
     plot_core_emissivity(
         shot,
-        emissivity,
-        r,
-        z,
-        t,
+        ds,
         time=time,
         noflux=noflux,
         novessel=novessel,

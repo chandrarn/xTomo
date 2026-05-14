@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
+import xarray as xr
 from matplotlib.ticker import MultipleLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -47,10 +48,10 @@ DEFAULT_EFIT = "analysis"
 
 def plot_core_emissivity(
     shot: int,
-    emissivity: np.ndarray,  # (nr, nz, npts)
-    r: np.ndarray,  # (nr,)  [m]
-    z: np.ndarray,  # (nz,)  [m]
-    t: np.ndarray,  # (npts,) [s]
+    emissivity: np.ndarray | xr.Dataset,  # (nr, nz, npts) or Dataset output
+    r: np.ndarray | None = None,  # (nr,)  [m]
+    z: np.ndarray | None = None,  # (nz,)  [m]
+    t: np.ndarray | None = None,  # (npts,) [s]
     time: float = 1.0,
     *,
     noflux: bool = False,
@@ -70,8 +71,10 @@ def plot_core_emissivity(
     Parameters
     ----------
     shot       : MDS shot number (used to fetch EFIT / vessel data)
-    emissivity : (nr, nz, npts) emissivity array [W/m^3]
-    r, z, t    : grid and time arrays from core_xray_emissivity()
+    emissivity : (nr, nz, npts) emissivity array [W/m^3], or Dataset from
+                 core_xray_emissivity()
+    r, z, t    : grid and time arrays from core_xray_emissivity() when
+                 emissivity is passed as ndarray
     time       : time [s] at which to plot (nearest available slice used)
     noflux     : skip EFIT flux contours
     novessel   : skip vessel / tile outline
@@ -101,6 +104,19 @@ def plot_core_emissivity(
                 "ytick.labelsize": 10,
             }
         )
+
+    psi_n_cube = None
+    if isinstance(emissivity, xr.Dataset):
+        ds = emissivity
+        emissivity = np.asarray(ds["emissivity"].values, dtype=float)
+        r = np.asarray(ds.coords["r"].values, dtype=float)
+        z = np.asarray(ds.coords["z"].values, dtype=float)
+        t = np.asarray(ds.coords["time"].values, dtype=float)
+        if "psi_n" in ds:
+            psi_n_cube = np.asarray(ds["psi_n"].values, dtype=float)
+
+    if r is None or z is None or t is None:
+        raise ValueError("r, z, and t must be provided when emissivity is not an xarray Dataset.")
 
     # ---- Select the nearest time slice -----------------------------------
     t_idx = int(np.argmin(np.abs(t - time)))
@@ -176,13 +192,17 @@ def plot_core_emissivity(
 
     # ---- EFIT flux contours ----------------------------------------------
     if not noflux:
-        # try:
-        psi, R_efit, Z_efit, psi_ax, psi_bndry = read_efit_psi(shot, t_plot, tree=efit_tree)
-
-        # Normalise:  psi_N = 0 at axis, 1 at LCFS
-        psi_n = (psi - psi_ax) / (psi_bndry - psi_ax)
-
-        Rg, Zg = np.meshgrid(R_efit, Z_efit, indexing="ij")
+        # Prefer the psi_n grid already computed by core_xray_emissivity.
+        if psi_n_cube is not None and psi_n_cube.shape[-1] > t_idx:
+            psi_n = psi_n_cube[:, :, t_idx]
+            Rg, Zg = np.meshgrid(r, z, indexing="ij")
+        else:
+            efit_times, psirz, R_efit, Z_efit, psi_ax, psi_bndry = read_efit_psi(
+                shot, tree=efit_tree
+            )
+            psi_idx = int(np.argmin(np.abs(efit_times - t_plot)))
+            psi_n = (psirz[psi_idx] - psi_ax[psi_idx]) / (psi_bndry[psi_idx] - psi_ax[psi_idx])
+            Rg, Zg = np.meshgrid(R_efit, Z_efit, indexing="ij")
 
         levels_inner: np.ndarray = (
             np.arange(n_flux_contours + 1) / (n_flux_contours + 1)
@@ -257,7 +277,7 @@ def main() -> None:
     tstop = args.tstop if args.tstop is not None else args.tplot + 0.01
 
     print(f"Computing emissivity for shot {args.shot} ...")
-    emissivity, r, z, t, ok = core_xray_emissivity(
+    ds = core_xray_emissivity(
         args.shot,
         tstart=tstart,
         tstop=tstop,
@@ -268,23 +288,17 @@ def main() -> None:
         lmax=args.lmax,
     )
 
-    if not ok:
-        print("Emissivity calculation failed.")
-    else:
-        plot_core_emissivity(
-            args.shot,
-            emissivity,
-            r,
-            z,
-            t,
-            time=args.tplot,
-            noflux=args.noflux,
-            novessel=args.novessel,
-            efit_tree=args.efit_tree,
-            cmap=args.cmap,
-            save=args.save,
-        )
-        plt.show()
+    plot_core_emissivity(
+        args.shot,
+        ds,
+        time=args.tplot,
+        noflux=args.noflux,
+        novessel=args.novessel,
+        efit_tree=args.efit_tree,
+        cmap=args.cmap,
+        save=args.save,
+    )
+    plt.show()
 
 
 if __name__ == "__main__":

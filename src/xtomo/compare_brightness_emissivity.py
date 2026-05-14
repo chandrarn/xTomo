@@ -227,7 +227,7 @@ def compare_brightness_emissivity(
     print("\nRunning tomographic inversion ...")
     dt_inv = 0.005  # 5 ms window around the requested time
 
-    emissivity, r_em, z_em, t_em, ok = core_xray_emissivity(
+    ds = core_xray_emissivity(
         shot,
         tstart=time - dt_inv,
         tstop=time + dt_inv,
@@ -240,6 +240,12 @@ def compare_brightness_emissivity(
         chord_mask=inversion_chord_mask,
         verbose=True,
     )
+
+    emissivity = ds["emissivity"].values
+    r_em = ds.coords["r"].values
+    z_em = ds.coords["z"].values
+    t_em = ds.coords["time"].values
+    ok = bool(ds.attrs.get("status", True))
 
     # Midplane (Z = 0) emissivity profile vs R
     if ok:

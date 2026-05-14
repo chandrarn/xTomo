@@ -2,6 +2,7 @@
 xtomo_mds.py
 ============
 MDSplus data reader for the C-Mod XTOMO soft-x-ray diagnostic.
+Original: /mnt/home/granetz/xtomo/read_brightness_1.pro, _3.pro
 
 All MDSplus access uses the mdsthin Connection pattern (thin-client),
 matching the style used in get_Te_ne.py.
@@ -266,21 +267,21 @@ def read_efit_data(shot: int, tree: str = "analysis"):
     return efit_times, r_magx, z_magx, rbbbs, zbbbs, nbbbs
 
 
-def read_efit_psi(shot: int, time: float, tree: str = "analysis"):
+def read_efit_psi(shot: int, tree: str = "analysis"):
     """
-    Read the EFIT poloidal flux psi(R,Z) at the time slice nearest *time*.
+    Read EFIT poloidal flux psi(R,Z,t) and associated axes.
 
     Returns
     -------
-    psi       : ndarray (nR, nZ) – normalised poloidal flux (0 axis = 1 mag axis)
-    R_grid    : ndarray (nR,)    [m]
-    Z_grid    : ndarray (nZ,)    [m]
-    psi_axis  : float – psi value at magnetic axis
-    psi_bndry : float – psi value at LCFS
+    efit_times : ndarray (n_time,) [s]
+    psirz      : ndarray (n_time, nR, nZ)  poloidal flux grid
+    R_grid     : ndarray (nR,) [m]
+    Z_grid     : ndarray (nZ,) [m]
+    psi_axis   : ndarray (n_time,)  psi at magnetic axis
+    psi_bndry  : ndarray (n_time,)  psi at LCFS
     """
     conn = open_tree(shot, tree)
     efit_times = np.asarray(conn.get("\\efit_aeqdsk:time").data(), dtype=float)
-    t_idx = int(np.argmin(np.abs(efit_times - time)))
 
     psirz = np.asarray(
         conn.get("\\efit_geqdsk:psirz").data(), dtype=float
@@ -295,15 +296,34 @@ def read_efit_psi(shot: int, time: float, tree: str = "analysis"):
     )  # See above comment, :sibry
     conn.closeAllTrees()
 
-    # psirz can arrive as (n_times, nZ, nR) or (n_times, nR, nZ) from MDSthin.
-    # We want shape (nR, nZ); take the time slice and orient accordingly.
-    psi_slice = psirz[t_idx] if psirz.ndim == 3 else psirz
+    # Make sure time is the first axis.
+    if psirz.ndim == 2:
+        psirz = psirz[np.newaxis, :, :]
+    elif (
+        psirz.ndim == 3 and psirz.shape[0] != len(efit_times) and psirz.shape[-1] == len(efit_times)
+    ):
+        psirz = np.moveaxis(psirz, -1, 0)
 
-    # Ensure (nR, nZ)
-    if psi_slice.shape[0] == len(Z_grid) and psi_slice.shape[1] == len(R_grid):
-        psi_slice = psi_slice.T
+    if psirz.ndim != 3:
+        raise ValueError(f"Unexpected psirz shape {psirz.shape}; expected 3-D array.")
 
-    return psi_slice, R_grid, Z_grid, float(psi_ax[t_idx]), float(psi_bndry[t_idx])
+    # Ensure spatial ordering is (nR, nZ) on each time slice.
+    if psirz.shape[1] == len(Z_grid) and psirz.shape[2] == len(R_grid):
+        psirz = np.transpose(psirz, (0, 2, 1))
+    elif not (psirz.shape[1] == len(R_grid) and psirz.shape[2] == len(Z_grid)):
+        raise ValueError(
+            "psirz spatial dimensions do not match R/Z grids: "
+            f"psirz={psirz.shape}, len(R)={len(R_grid)}, len(Z)={len(Z_grid)}"
+        )
+
+    return (
+        efit_times,
+        psirz,
+        R_grid,
+        Z_grid,
+        np.asarray(psi_ax, dtype=float),
+        np.asarray(psi_bndry, dtype=float),
+    )
 
 
 # ---------------------------------------------------------------------------

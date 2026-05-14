@@ -17,6 +17,7 @@ from .core_xray_emissivity import (
     core_xray_emissivity,
     read_core_emissivity,
 )
+from .mask_cords import mask_cords
 from .plot_core_emissivity import plot_core_emissivity
 from .xtomo_mds import (
     XTOMO_SERVER,
@@ -45,6 +46,7 @@ __all__ = [
     "bessel_zeros_init",
     "core_xray_emissivity",
     "read_core_emissivity",
+    "mask_cords",
     # Plotting
     "plot_core_emissivity",
     "compare_brightness_emissivity",
